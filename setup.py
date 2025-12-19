@@ -18,7 +18,7 @@ def main():
     cmake_source_dir = "opencv"
     minimum_supported_numpy = "1.13.3"
     build_contrib = get_build_env_var_by_name("contrib")
-    build_headless = get_build_env_var_by_name("headless")
+    build_headless = True  # Force headless build for opencv-python-headless variant
     build_java = "ON" if get_build_env_var_by_name("java") else "OFF"
     build_rolling = get_build_env_var_by_name("rolling")
 
@@ -191,7 +191,7 @@ def main():
             "-DBUILD_TESTS=OFF",
             "-DBUILD_PERF_TESTS=OFF",
             "-DBUILD_DOCS=OFF",
-            "-DPYTHON3_LIMITED_API=ON",
+            "-DPYTHON3_LIMITED_API=%s" % ("OFF" if sysconfig.get_config_var("Py_GIL_DISABLED") else "ON"),
             "-DBUILD_OPENEXR=ON",
         ]
         + (
