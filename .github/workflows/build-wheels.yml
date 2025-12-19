@@ -103,8 +103,12 @@ jobs:
           CIBW_ARCHS_WINDOWS: "AMD64"
           # Enable free-threading support
           CIBW_FREE_THREADED_SUPPORT: "1"
+          # Enable prerelease Python versions (3.14 is still in development)
+          CIBW_PRERELEASE_PYTHONS: "1"
+          # Use manylinux_2_28 for newer glibc
+          CIBW_MANYLINUX_X86_64_IMAGE: "manylinux_2_28"
           # OpenCV needs more setup
-          CIBW_BEFORE_ALL_LINUX: "yum install -y cmake ninja-build || apt-get update && apt-get install -y cmake ninja-build"
+          CIBW_BEFORE_ALL_LINUX: "dnf install -y cmake ninja-build"
           CIBW_ENVIRONMENT: "ENABLE_HEADLESS=${{ matrix.variant == 'opencv-python-headless' && '1' || '0' }} CMAKE_BUILD_PARALLEL_LEVEL=4"
           # Longer repair wheel timeout for OpenCV
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
