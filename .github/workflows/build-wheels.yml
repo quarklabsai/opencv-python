@@ -1,0 +1,142 @@
+# GitHub Actions workflow for opencv-python
+# Builds both opencv-python and opencv-python-headless variants
+#
+# Copy this file to .github/workflows/build-wheels.yml in the opencv-python fork
+
+name: Build and Release Wheels
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag for release (e.g., v4.10.0.1)'
+        required: false
+      variant:
+        description: 'Which variant to build'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - both
+          - opencv-python
+          - opencv-python-headless
+
+env:
+  # OpenCV build settings
+  ENABLE_CONTRIB: 0
+  ENABLE_ROLLING: 0
+
+jobs:
+  build_wheels:
+    name: Build ${{ matrix.variant }} on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 180  # OpenCV builds are slow
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, macos-14, windows-2022]
+        variant: [opencv-python, opencv-python-headless]
+        exclude:
+          - variant: ${{ github.event.inputs.variant == 'opencv-python' && 'opencv-python-headless' || '' }}
+          - variant: ${{ github.event.inputs.variant == 'opencv-python-headless' && 'opencv-python' || '' }}
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.14-dev'
+          allow-prereleases: true
+
+      # Linux dependencies
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake ninja-build \
+            libavcodec-dev libavformat-dev libswscale-dev \
+            libgstreamer-plugins-base1.0-dev libgstreamer1.0-dev \
+            libpng-dev libjpeg-dev libtiff-dev \
+            ${{ matrix.variant == 'opencv-python' && 'libgtk-3-dev libcanberra-gtk3-module' || '' }}
+
+      # macOS dependencies
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install cmake ninja ffmpeg
+
+      # Windows dependencies
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        run: |
+          choco install cmake ninja -y
+
+      - name: Set headless environment
+        if: matrix.variant == 'opencv-python-headless'
+        run: echo "ENABLE_HEADLESS=1" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Set GUI environment
+        if: matrix.variant == 'opencv-python'
+        run: echo "ENABLE_HEADLESS=0" >> $GITHUB_ENV
+        shell: bash
+
+      - name: Install cibuildwheel
+        run: pip install cibuildwheel==2.21.3
+
+      - name: Build wheels
+        run: cibuildwheel --output-dir wheelhouse
+        env:
+          # Build for Python 3.14 free-threaded
+          CIBW_BUILD: "cp314t-* cp314-* cp313-* cp312-*"
+          CIBW_SKIP: "*-musllinux_* *-manylinux_i686 *-win32"
+          CIBW_ARCHS_LINUX: "x86_64"
+          CIBW_ARCHS_MACOS: "arm64"
+          CIBW_ARCHS_WINDOWS: "AMD64"
+          # Enable free-threading support
+          CIBW_FREE_THREADED_SUPPORT: "1"
+          # OpenCV needs more setup
+          CIBW_BEFORE_ALL_LINUX: "yum install -y cmake ninja-build || apt-get update && apt-get install -y cmake ninja-build"
+          CIBW_ENVIRONMENT: "ENABLE_HEADLESS=${{ matrix.variant == 'opencv-python-headless' && '1' || '0' }} CMAKE_BUILD_PARALLEL_LEVEL=4"
+          # Longer repair wheel timeout for OpenCV
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: "auditwheel repair -w {dest_dir} {wheel}"
+          CIBW_REPAIR_WHEEL_COMMAND_MACOS: "delocate-wheel --require-archs {delocate_archs} -w {dest_dir} -v {wheel}"
+
+      - name: Upload wheels
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.variant }}-${{ matrix.os }}
+          path: ./wheelhouse/*.whl
+
+  release:
+    name: Create GitHub Release
+    needs: [build_wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          tag_name: ${{ github.event.inputs.version || github.ref_name }}
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'rc') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'alpha') }}
